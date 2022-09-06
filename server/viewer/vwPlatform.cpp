@@ -539,6 +539,18 @@ vwPlatform::eventWheelScrolled (int x, int y, int steps, bsKeyModState kms)
     notifyDrawDirty();
 }
 
+void
+vwPlatform::eventModifiersChanged (bsKeyModState kms)
+{
+    ImGuiIO& io     = ImGui::GetIO();
+
+    io.KeyCtrl  = kms.ctrl;
+    io.KeyShift = kms.shift;
+    io.KeyAlt   = kms.alt;
+    io.KeySuper = kms.sys;
+
+    notifyDrawDirty();
+}
 
 void
 vwPlatform::eventChar(char16_t codepoint)

@@ -69,6 +69,7 @@ public:
     void eventButtonReleased(int buttonId, int x, int y, bsKeyModState kms);
     void eventMouseMotion   (int x, int y);
     void eventWheelScrolled (int x, int y, int steps, bsKeyModState kms);
+    void eventModifiersChanged (bsKeyModState kms);
 
 private:
     vwPlatform(const vwPlatform& other); // To please static analyzers

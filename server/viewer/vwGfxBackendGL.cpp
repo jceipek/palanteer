@@ -16,7 +16,7 @@
 
 // This file implements the Open GL backend
 
-#if defined(__linux__) || defined(_WIN32)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
 
 // External
 #include "imgui.h"
@@ -29,7 +29,11 @@
 
 // Shaders
 static const GLchar* guiVertexShaderSrc =
+#ifdef __APPLE__
+    "#version 410 core\n"
+#else
     "#version 300 es\n"
+#endif
     "uniform mat4 ProjMtx;\n"
     "layout (location = 0) in vec2 Position;\n"
     "layout (location = 1) in vec2 UV;\n"
@@ -44,7 +48,11 @@ static const GLchar* guiVertexShaderSrc =
     "}\n";
 
 static const GLchar* guiFragmentShaderSrc =
+#ifdef __APPLE__
+    "#version 410 core\n"
+#else
     "#version 300 es\n"
+#endif
     "precision mediump float;\n"
     "uniform sampler2D Texture;\n"
     "in vec2 Frag_UV;\n"
@@ -240,4 +248,4 @@ vwBackendUninit(void)
 }
 
 
-#endif // if defined(__linux__) || defined(_WIN32)
+#endif // if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
