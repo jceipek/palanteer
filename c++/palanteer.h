@@ -49,11 +49,17 @@
 
 #if PL_IMPLEMENTATION==1 || PL_EXPORT==1
 
-// Enable installing some signal (ABRT, FPE, ILL, SEGV, INT, TERM) handlers
+// Enable installing some signal (ABRT, FPE, ILL, SEGV, TERM and INT (if PL_IMPL_CATCH_SIGINT is 1) ) handlers
 //  If enabled, last collected events before crash will be flushed, which helps further investigation.
 //  Default is enabled.
 #ifndef PL_IMPL_CATCH_SIGNALS
 #define PL_IMPL_CATCH_SIGNALS 1
+#endif
+
+// Enable installing SIGINT signal (applicable only if PL_IMPL_CATCH_SIGNALS is 1)
+//  Default is enabled.
+#ifndef PL_IMPL_CATCH_SIGINT
+#define PL_IMPL_CATCH_SIGINT 1
 #endif
 
 // Default collection buffer size. Events are written in these double bank buffers,
@@ -288,6 +294,7 @@
 //  Its prototype is without parameter and returning a monotonic unsigned integer of size
 //  uint32_t if PL_SHORT_DATE==1 else uint64_t. See getClockTick() definition below, as an example.
 // Note: Context switch collection may not work with user-defined clocks if clocks are not matching
+// Note2: You can use the undocumented compilation flag PL_STANDARD_CLOCK=1 to force the usage of the standard clock on Linux
 #ifndef PL_GET_CLOCK_TICK_FUNC
 #define PL_GET_CLOCK_TICK_FUNC() plPriv::getClockTick()
 #endif
@@ -308,7 +315,7 @@
 // Implemented for both Windows and Linux
 #ifndef PL_GET_SYS_THREAD_ID
 #if defined(__unix__)
-#define PL_GET_SYS_THREAD_ID() syscall(SYS_gettid)
+#define PL_GET_SYS_THREAD_ID() (uint32_t)(syscall(SYS_gettid))
 #endif
 #if defined(_WIN32)
 #define PL_GET_SYS_THREAD_ID() GetCurrentThreadId()
@@ -372,6 +379,10 @@
 //-----------------------------------------------------------------------------
 // Public assertions interface
 //-----------------------------------------------------------------------------
+
+// This line is unfortunately the only way found to remove the zero-arguments-variadic-macro and the
+// prohibited-anonymous-structs warnings with GCC when the build is using the option -Wpedantic
+#pragma GCC system_header
 
 #if USE_PL==1 && PL_NOASSERT==0
 
@@ -955,7 +966,7 @@ namespace plPriv {
     template<typename T> inline void printParamType_(char* infoStr, int& offset, const char* name, T  param)
     { offset += snprintf(infoStr+offset, CRASH_MSG_SIZE-offset, "    - %s is not a numeric or string type (enum?)\n", name); if(offset>CRASH_MSG_SIZE-1) offset = CRASH_MSG_SIZE-1; PL_UNUSED(param); }
     template<typename T> inline void printParamType_(char* infoStr, int& offset, const char* name, T* param)
-    { offset += snprintf(infoStr+offset, CRASH_MSG_SIZE-offset, "    - %-7s %-20s = %p\n", "pointer", name, param); if(offset>CRASH_MSG_SIZE-1) offset = CRASH_MSG_SIZE-1; }
+    { offset += snprintf(infoStr+offset, CRASH_MSG_SIZE-offset, "    - %-7s %-20s = %p\n", "pointer", name, (void*)param); if(offset>CRASH_MSG_SIZE-1) offset = CRASH_MSG_SIZE-1; }
     template<> inline void printParamType_<bool>(char* infoStr, int& offset, const char* name, bool param)
     { offset += snprintf(infoStr+offset, CRASH_MSG_SIZE-offset, "    - %-7s %-20s = %s\n", "bool", name, param?"true":"false"); if(offset>CRASH_MSG_SIZE-1) offset = CRASH_MSG_SIZE-1; }
     template<> inline void printParamType_<char>(char* infoStr, int& offset, const char* name, char* param)
@@ -965,18 +976,18 @@ namespace plPriv {
 #define PL_DECLARE_ASSERT_TYPE(type_, code_, display_)                  \
     template<> inline void printParamType_<type_>(char* infoStr, int& offset, const char* name, type_ param) \
     { offset += snprintf(infoStr+offset, CRASH_MSG_SIZE-offset, "    - %-7s %-20s = %" #code_ "\n", #display_, name, param); if(offset>CRASH_MSG_SIZE-1) offset = CRASH_MSG_SIZE-1; }
-    PL_DECLARE_ASSERT_TYPE(char,           d, s8);
-    PL_DECLARE_ASSERT_TYPE(unsigned char,  u, u8);
-    PL_DECLARE_ASSERT_TYPE(short int,      d, s16);
-    PL_DECLARE_ASSERT_TYPE(unsigned short, u, u16);
-    PL_DECLARE_ASSERT_TYPE(int,            d, int);
-    PL_DECLARE_ASSERT_TYPE(unsigned int,   u, u32);
-    PL_DECLARE_ASSERT_TYPE(long,           ld, s64);
-    PL_DECLARE_ASSERT_TYPE(unsigned long,  lu, u64);
-    PL_DECLARE_ASSERT_TYPE(long long,      lld, s64);
-    PL_DECLARE_ASSERT_TYPE(unsigned long long, llu, u64);
-    PL_DECLARE_ASSERT_TYPE(float,          f,  float);
-    PL_DECLARE_ASSERT_TYPE(double,         lf, double);
+    PL_DECLARE_ASSERT_TYPE(char,           d, s8)
+    PL_DECLARE_ASSERT_TYPE(unsigned char,  u, u8)
+    PL_DECLARE_ASSERT_TYPE(short int,      d, s16)
+    PL_DECLARE_ASSERT_TYPE(unsigned short, u, u16)
+    PL_DECLARE_ASSERT_TYPE(int,            d, int)
+    PL_DECLARE_ASSERT_TYPE(unsigned int,   u, u32)
+    PL_DECLARE_ASSERT_TYPE(long,           ld, s64)
+    PL_DECLARE_ASSERT_TYPE(unsigned long,  lu, u64)
+    PL_DECLARE_ASSERT_TYPE(long long,      lld, s64)
+    PL_DECLARE_ASSERT_TYPE(unsigned long long, llu, u64)
+    PL_DECLARE_ASSERT_TYPE(float,          f,  float)
+    PL_DECLARE_ASSERT_TYPE(double,         lf, double)
     template<typename T> inline void printParams_(char* infoStr, int& offset, const char* name, T param)
     { if(name) { printParamType_(infoStr, offset, name, param); } }
     template<typename T, typename... Args> inline void printParams_(char* infoStr, int& offset, const char* name, T value, Args... args)
@@ -1017,7 +1028,7 @@ namespace plPriv {
     template<typename T> inline void printParamTypeEs_(char* infoStr, int& offset, hashStr_t nameHash, T  param)
     { offset += snprintf(infoStr+offset, CRASH_MSG_SIZE-offset, "    - @@%016" PL_PRI_HASH "@@ is not a numeric or string type (enum?)\n", nameHash); if(offset>CRASH_MSG_SIZE-1) offset = CRASH_MSG_SIZE-1; PL_UNUSED(param); }
     template<typename T> inline void printParamTypeEs_(char* infoStr, int& offset, hashStr_t nameHash, T* param)
-    { offset += snprintf(infoStr+offset, CRASH_MSG_SIZE-offset, "    - pointer @@%016" PL_PRI_HASH "@@ = %p\n", nameHash, param); if(offset>CRASH_MSG_SIZE-1) offset = CRASH_MSG_SIZE-1; }
+    { offset += snprintf(infoStr+offset, CRASH_MSG_SIZE-offset, "    - pointer @@%016" PL_PRI_HASH "@@ = %p\n", nameHash, (void*)param); if(offset>CRASH_MSG_SIZE-1) offset = CRASH_MSG_SIZE-1; }
     template<> inline void printParamTypeEs_<bool>(char* infoStr, int& offset, hashStr_t nameHash, bool param)
     { offset += snprintf(infoStr+offset, CRASH_MSG_SIZE-offset, "    - bool    @@%016" PL_PRI_HASH "@@ = %s\n", nameHash, param?"true":"false"); if(offset>CRASH_MSG_SIZE-1) offset = CRASH_MSG_SIZE-1; }
     template<> inline void printParamTypeEs_<char>(char* infoStr, int& offset, hashStr_t nameHash, char* param)
@@ -1027,18 +1038,18 @@ namespace plPriv {
 #define PL_DECLARE_ASSERT_TYPE(type_, code_, display_)                  \
     template<> inline void printParamTypeEs_<type_>(char* infoStr, int& offset, hashStr_t nameHash, type_ param) \
     { offset += snprintf(infoStr+offset, CRASH_MSG_SIZE-offset, "    - %-7s @@%016" PL_PRI_HASH "@@ = %" #code_ "\n", #display_, nameHash, param); if(offset>CRASH_MSG_SIZE-1) offset = CRASH_MSG_SIZE-1; }
-    PL_DECLARE_ASSERT_TYPE(char,           d, s8);
-    PL_DECLARE_ASSERT_TYPE(unsigned char,  d, u8);
-    PL_DECLARE_ASSERT_TYPE(short int,      d, s16);
-    PL_DECLARE_ASSERT_TYPE(unsigned short, d, u16);
-    PL_DECLARE_ASSERT_TYPE(int,            d, int);
-    PL_DECLARE_ASSERT_TYPE(unsigned int,   u, u32);
-    PL_DECLARE_ASSERT_TYPE(long,           ld, s64);
-    PL_DECLARE_ASSERT_TYPE(unsigned long,  lu, u64);
-    PL_DECLARE_ASSERT_TYPE(long long,      lld, s64);
-    PL_DECLARE_ASSERT_TYPE(unsigned long long, llu, u64);
-    PL_DECLARE_ASSERT_TYPE(float,          f,  float);
-    PL_DECLARE_ASSERT_TYPE(double,         lf, double);
+    PL_DECLARE_ASSERT_TYPE(char,           d, s8)
+    PL_DECLARE_ASSERT_TYPE(unsigned char,  d, u8)
+    PL_DECLARE_ASSERT_TYPE(short int,      d, s16)
+    PL_DECLARE_ASSERT_TYPE(unsigned short, d, u16)
+    PL_DECLARE_ASSERT_TYPE(int,            d, int)
+    PL_DECLARE_ASSERT_TYPE(unsigned int,   u, u32)
+    PL_DECLARE_ASSERT_TYPE(long,           ld, s64)
+    PL_DECLARE_ASSERT_TYPE(unsigned long,  lu, u64)
+    PL_DECLARE_ASSERT_TYPE(long long,      lld, s64)
+    PL_DECLARE_ASSERT_TYPE(unsigned long long, llu, u64)
+    PL_DECLARE_ASSERT_TYPE(float,          f,  float)
+    PL_DECLARE_ASSERT_TYPE(double,         lf, double)
     template<typename T> inline void printParamsEs_(char* infoStr, int& offset, hashStr_t nameHash, T param)
     { if(nameHash) { printParamTypeEs_(infoStr, offset, nameHash, param); } }
     template<typename T, typename... Args> inline void printParamsEs_(char* infoStr, int& offset, hashStr_t nameHash, T value, Args... args)
@@ -1566,7 +1577,7 @@ namespace plPriv {
         // Windows
         // Context switch events are using QPC, so a date conversion for these events is needed on Windows
         return (clockType_t) int64_t(__rdtsc());
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) && PL_STANDARD_CLOCK!=1
         // Linux
         // Kernel events can be configured to use RDTSC too, so no extra work on converting clocks under Linux
         uint64_t low, high;
@@ -1929,19 +1940,19 @@ namespace plPriv {
     template<typename... Args> void eventLogStoreParam(uint32_t bi, uint16_t paramTypes, int paramIdx, int dataOffset, double   value, Args... args);
     template<typename... Args> void eventLogStoreParam(uint32_t bi, uint16_t paramTypes, int paramIdx, int dataOffset, void*    value, Args... args);
     template<typename... Args> void eventLogStoreParam(uint32_t bi, uint16_t paramTypes, int paramIdx, int dataOffset, const char* value, Args... args);
-    EVENT_LOG_STORE_PARAM_IMPL(int32_t,  int32_t,  , PL_FLAG_TYPE_DATA_S32);
-    EVENT_LOG_STORE_PARAM_IMPL(uint32_t, uint32_t, , PL_FLAG_TYPE_DATA_U32);
-    EVENT_LOG_STORE_PARAM_IMPL(float,    float,    , PL_FLAG_TYPE_DATA_FLOAT);
+    EVENT_LOG_STORE_PARAM_IMPL(int32_t,  int32_t,  , PL_FLAG_TYPE_DATA_S32)
+    EVENT_LOG_STORE_PARAM_IMPL(uint32_t, uint32_t, , PL_FLAG_TYPE_DATA_U32)
+    EVENT_LOG_STORE_PARAM_IMPL(float,    float,    , PL_FLAG_TYPE_DATA_FLOAT)
 #if PL_COMPACT_MODEL==1
-    EVENT_LOG_STORE_PARAM_IMPL(void*,    uint32_t,   (uintptr_t), PL_FLAG_TYPE_DATA_U32);
-    EVENT_LOG_STORE_PARAM_IMPL(int64_t,  int32_t,  , PL_FLAG_TYPE_DATA_S32);
-    EVENT_LOG_STORE_PARAM_IMPL(uint64_t, uint32_t, , PL_FLAG_TYPE_DATA_U32);
-    EVENT_LOG_STORE_PARAM_IMPL(double,   float,    , PL_FLAG_TYPE_DATA_FLOAT);
+    EVENT_LOG_STORE_PARAM_IMPL(void*,    uint32_t,   (uintptr_t), PL_FLAG_TYPE_DATA_U32)
+    EVENT_LOG_STORE_PARAM_IMPL(int64_t,  int32_t,  , PL_FLAG_TYPE_DATA_S32)
+    EVENT_LOG_STORE_PARAM_IMPL(uint64_t, uint32_t, , PL_FLAG_TYPE_DATA_U32)
+    EVENT_LOG_STORE_PARAM_IMPL(double,   float,    , PL_FLAG_TYPE_DATA_FLOAT)
 #else
-    EVENT_LOG_STORE_PARAM_IMPL(void*,    uint64_t,   (uintptr_t), PL_FLAG_TYPE_DATA_U64);
-    EVENT_LOG_STORE_PARAM_IMPL(int64_t,  int64_t,  , PL_FLAG_TYPE_DATA_S64);
-    EVENT_LOG_STORE_PARAM_IMPL(uint64_t, uint64_t, , PL_FLAG_TYPE_DATA_U64);
-    EVENT_LOG_STORE_PARAM_IMPL(double,   double,   , PL_FLAG_TYPE_DATA_DOUBLE);
+    EVENT_LOG_STORE_PARAM_IMPL(void*,    uint64_t,   (uintptr_t), PL_FLAG_TYPE_DATA_U64)
+    EVENT_LOG_STORE_PARAM_IMPL(int64_t,  int64_t,  , PL_FLAG_TYPE_DATA_S64)
+    EVENT_LOG_STORE_PARAM_IMPL(uint64_t, uint64_t, , PL_FLAG_TYPE_DATA_U64)
+    EVENT_LOG_STORE_PARAM_IMPL(double,   double,   , PL_FLAG_TYPE_DATA_DOUBLE)
 #endif
 
     template<typename... Args> void
@@ -1961,7 +1972,7 @@ namespace plPriv {
             dataOffset = 0;
         }
         /* Update the u16 type area, which can hold up to 4 times 3 bits, the top bit being "is it the last param event?" */
-        paramTypes |= PL_FLAG_TYPE_DATA_STRING<<(3*paramIdx);
+        paramTypes |= (uint16_t)(PL_FLAG_TYPE_DATA_STRING<<(3*paramIdx));
         /* Raw write inside the event (C++ limits the unamed struct & union usage, which would have made it less hacky...) */
         uint8_t* payload = ((uint8_t*)&globalCtx.collectBuffers[bi>>31][bi&EVTBUFFER_MASK_INDEX])+4;
         *((const char**)(payload+dataOffset)) = getDynString(value);
@@ -2144,25 +2155,25 @@ namespace plPriv {
     // Event structure for external world
     // Compact model (12 bytes)
      struct EventExtCompact {
-	    // Header: 4 bytes
+        // Header: 4 bytes
         uint8_t  threadId;
         uint8_t  flags;
         uint16_t lineNbr;
-		// 4 bytes
-		union {
-			struct {
-				union {
-					uint16_t filenameIdx;
-					struct {
-						uint8_t  prevCoreId;  // Context switch
-						uint8_t  newCoreId;
-					};
-				} ;
-				uint16_t nameIdx;
-			};
+        // 4 bytes
+        union {
+            struct {
+                union {
+                    uint16_t filenameIdx;
+                    struct {
+                        uint8_t  prevCoreId;  // Context switch
+                        uint8_t  newCoreId;
+                    };
+                } ;
+                uint16_t nameIdx;
+            };
             uint32_t memSize;  // Memory case only. The unused fields filenameIdx and nameIdx are overriden
         };
-		// Value: 4 bytes
+        // Value: 4 bytes
         union {
             int32_t  vInt;
             uint32_t vU32;
@@ -2173,7 +2184,7 @@ namespace plPriv {
 
     // Full model (24 bytes)
     struct EventExtFull {
-	    // Header: 4 bytes
+        // Header: 4 bytes
         uint8_t  threadId;
         uint8_t  flags;
         uint16_t lineNbr;
@@ -2473,7 +2484,7 @@ namespace plPriv {
                     Parameter& p = newCli.parameters[newCli.paramQty-1];
                     p.hasDefaultValue = 1;
                     if(p.type==PL_INTEGER) {
-                        int readQty = sscanf(s, "[[%" PRId64 "]]", &p.defaultValue);
+                        int readQty = sscanf(s, "[[%" PRId64 "]]", (int64_t*)&p.defaultValue);
                         plAssert(readQty==1, "Unable to parse the integer default value of the parameter", newCli.paramQty-1);
                         int tmp; getString(s, tmp);
                     } else if(p.type==PL_FLOAT) {
@@ -2570,7 +2581,7 @@ namespace plPriv {
                         ++foundParamQty;
                     }
                     if(cli->parameters[paramIdx].type==PL_INTEGER) {
-                        if(sscanf(s, "%" PRId64, &_cio._paramValues[paramIdx])!=1 || !skipValue(s))
+                        if(sscanf(s, "%" PRId64, (int64_t*)&_cio._paramValues[paramIdx])!=1 || !skipValue(s))
                             CLI_INPUT_ERROR("Parameter '%.*s' is not a valid integer", (int)(s-sNameStart-1), sNameStart);
                     } else if(cli->parameters[paramIdx].type==PL_FLOAT) {
                         if(sscanf(s, "%lf", (double*)&_cio._paramValues[paramIdx])!=1 || !skipValue(s))
@@ -3027,7 +3038,7 @@ namespace plPriv {
     static int
     palComReceive(uint8_t* buffer, int maxBuffersize) {
         plAssert(implCtx.serverSocket!=PL_PRIV_SOCKET_ERROR);
-        int byteQty = recv(implCtx.serverSocket, (char*)buffer, maxBuffersize, 0);
+        int byteQty = (int)recv(implCtx.serverSocket, (char*)buffer, maxBuffersize, 0);
 #ifdef _WIN32
         if((WSAGetLastError()==EAGAIN || WSAGetLastError()==EWOULDBLOCK) && byteQty<0) return -1; // Timeout on reception (empty)
 #else
@@ -3057,7 +3068,9 @@ namespace plPriv {
 
             // Set the timeout on reception
 #ifdef __unix__
-            const struct timeval socketTimeout = { .tv_sec=0, .tv_usec=10000 };
+            struct timeval socketTimeout{};
+            socketTimeout.tv_sec = 0;
+            socketTimeout.tv_usec = 10000;
 #endif
 #ifdef _WIN32
             DWORD socketTimeout = 10*1000;
@@ -3117,7 +3130,7 @@ namespace plPriv {
             if(socketStatus==0) {
                 char tmp[512];
                 for(int i=0; i<10; ++i) { // 1 iteration should be enough in practice.
-                    int readByteQty = recv(implCtx.serverSocket, (char*)tmp, sizeof(tmp), 0); // The timeout is still applied
+                    int readByteQty = (int)recv(implCtx.serverSocket, (char*)tmp, sizeof(tmp), 0); // The timeout is still applied
 #ifdef _WIN32
                     if(!(WSAGetLastError()==EAGAIN || WSAGetLastError()==EWOULDBLOCK) || readByteQty==0) break;  // End of connection from server side?
 #else
@@ -3175,12 +3188,12 @@ namespace plPriv {
         br[2] = ((int)PL_DATA_TYPE_CONTROL>>8)&0xFF;
         br[3] = ((int)PL_DATA_TYPE_CONTROL>>0)&0xFF;
         commandByteSize += 2;               // Size of the command type
-        br[4] = (commandByteSize>>24)&0xFF; // Command byte quantity (after the 8 bytes remote data type header)
-        br[5] = (commandByteSize>>16)&0xFF;
-        br[6] = (commandByteSize>> 8)&0xFF;
-        br[7] = (commandByteSize>> 0)&0xFF;
-        br[8] = ((int)commandType>>8)&0xFF;
-        br[9] = ((int)commandType>>0)&0xFF;
+        br[4] = (uint8_t)((commandByteSize>>24)&0xFF); // Command byte quantity (after the 8 bytes remote data type header)
+        br[5] = (uint8_t)((commandByteSize>>16)&0xFF);
+        br[6] = (uint8_t)((commandByteSize>> 8)&0xFF);
+        br[7] = (uint8_t)((commandByteSize>> 0)&0xFF);
+        br[8] = (uint8_t)(((int)commandType>>8)&0xFF);
+        br[9] = (uint8_t)(((int)commandType>>0)&0xFF);
         return br;
     }
 
@@ -3368,8 +3381,8 @@ namespace plPriv {
                     }
 
                     // Store the answer
-                    br[rspOffset+0] = (((int)cliStatus)>>8)&0xFF;
-                    br[rspOffset+1] = (((int)cliStatus)>>0)&0xFF;
+                    br[rspOffset+0] = (uint8_t)((((int)cliStatus)>>8)&0xFF);
+                    br[rspOffset+1] = (uint8_t)((((int)cliStatus)>>0)&0xFF);
                     memcpy(br+rspOffset+2, cliResponse, responseLength); // Copy the response string with the zero termination
                     rspOffset += 2+responseLength;
 
@@ -3385,12 +3398,12 @@ namespace plPriv {
                          cliRequestNbr, cliRequestQty, reqOffset, 8+commandByteQty);
 
                 // Finalize the response and send it
-                br[4] = ((rspOffset-8)>>24)&0xFF; // Command byte quantity (after the 8 bytes remote data type header)
-                br[5] = ((rspOffset-8)>>16)&0xFF;
-                br[6] = ((rspOffset-8)>> 8)&0xFF;
-                br[7] = ((rspOffset-8)>> 0)&0xFF;
-                br[10] = (cliRequestNbr>>8)&0xFF; // CLI answer quantity (less than or equal to the request quantity)
-                br[11] = (cliRequestNbr>>0)&0xFF;
+                br[4] = (uint8_t)(((rspOffset-8)>>24)&0xFF); // Command byte quantity (after the 8 bytes remote data type header)
+                br[5] = (uint8_t)(((rspOffset-8)>>16)&0xFF);
+                br[6] = (uint8_t)(((rspOffset-8)>> 8)&0xFF);
+                br[7] = (uint8_t)(((rspOffset-8)>> 0)&0xFF);
+                br[10] = (uint8_t)((cliRequestNbr>>8)&0xFF); // CLI answer quantity (less than or equal to the request quantity)
+                br[11] = (uint8_t)((cliRequestNbr>>0)&0xFF);
                 helperFinishResponseBuffer(rspOffset);
             } // if(ct==PL_CMD_CALL_CLI)
 
@@ -3430,10 +3443,10 @@ namespace plPriv {
         sBuf[1] = 'L';
         sBuf[2] = ((int)PL_DATA_TYPE_STRING>>8)&0xFF; // Data block type
         sBuf[3] = ((int)PL_DATA_TYPE_STRING>>0)&0xFF;
-        sBuf[4] = (stringQty>>24)&0xFF; // String qty
-        sBuf[5] = (stringQty>>16)&0xFF;
-        sBuf[6] = (stringQty>> 8)&0xFF;
-        sBuf[7] = (stringQty>> 0)&0xFF;
+        sBuf[4] = (uint8_t)((stringQty>>24)&0xFF); // String qty
+        sBuf[5] = (uint8_t)((stringQty>>16)&0xFF);
+        sBuf[6] = (uint8_t)((stringQty>> 8)&0xFF);
+        sBuf[7] = (uint8_t)((stringQty>> 0)&0xFF);
         palComSend(&sBuf[0], sBuf.size());
         ic.stats.sentStringQty += stringQty;
         plgData(PL_VERBOSE, "sent strings", stringQty);
@@ -3452,14 +3465,14 @@ namespace plPriv {
             }                                                           \
             int sOffset = sBuf.size();                                  \
             sBuf.resize(sBuf.size()+8+l);                               \
-            sBuf[sOffset+0] = (((uint64_t)(h))>>56)&0xFF;               \
-            sBuf[sOffset+1] = (((uint64_t)(h))>>48)&0xFF;               \
-            sBuf[sOffset+2] = (((uint64_t)(h))>>40)&0xFF;               \
-            sBuf[sOffset+3] = (((uint64_t)(h))>>32)&0xFF;               \
-            sBuf[sOffset+4] = (((uint64_t)(h))>>24)&0xFF;               \
-            sBuf[sOffset+5] = (((uint64_t)(h))>>16)&0xFF;               \
-            sBuf[sOffset+6] = (((uint64_t)(h))>> 8)&0xFF;               \
-            sBuf[sOffset+7] = (((uint64_t)(h))>> 0)&0xFF;               \
+            sBuf[sOffset+0] = (uint8_t)((((uint64_t)(h))>>56)&0xFF);    \
+            sBuf[sOffset+1] = (uint8_t)((((uint64_t)(h))>>48)&0xFF);    \
+            sBuf[sOffset+2] = (uint8_t)((((uint64_t)(h))>>40)&0xFF);    \
+            sBuf[sOffset+3] = (uint8_t)((((uint64_t)(h))>>32)&0xFF);    \
+            sBuf[sOffset+4] = (uint8_t)((((uint64_t)(h))>>24)&0xFF);    \
+            sBuf[sOffset+5] = (uint8_t)((((uint64_t)(h))>>16)&0xFF);    \
+            sBuf[sOffset+6] = (uint8_t)((((uint64_t)(h))>> 8)&0xFF);    \
+            sBuf[sOffset+7] = (uint8_t)((((uint64_t)(h))>> 0)&0xFF);    \
             if(s) memcpy(&sBuf[sOffset+8], s, l);                       \
             else  sBuf[sOffset+8] = 0;                                  \
             ic.lkupStringToIndex.insert(h, ic.stringUniqueId);          \
@@ -3512,8 +3525,8 @@ namespace plPriv {
                      "The CLI qty exceeds the capacity of the response buffer to declare them on server side",
                      PL_IMPL_REMOTE_RESPONSE_BUFFER_BYTE_QTY, 10/*header*/ + 6/*bytes per CLI*/*cliQty);
             uint8_t* br = helperFillResponseBufferHeader(PL_NTF_DECLARE_CLI, 2+2*3*cliQty, ic.sendBuffer);
-            br[10] = (cliQty>>8)&0xFF;
-            br[11] = (cliQty>>0)&0xFF;
+            br[10] = (uint8_t)((cliQty>>8)&0xFF);
+            br[11] = (uint8_t)((cliQty>>0)&0xFF);
 
             // Parse the new non-sent CLIs
             int offset = 12, stringQty = 0;
@@ -3526,8 +3539,8 @@ namespace plPriv {
                     const char* str = (j==0)? cs.name : ((j==1)? cs.specParams : cs.description);
                     strHash = (j==0)? cs.nameHash : ((j==1)? cs.specParamsHash : cs.descriptionHash);
                     PL_PRIV_PROCESS_STRING(strHash, str, strIdx);
-                    br[offset++] = (strIdx>>8)&0xFF;
-                    br[offset++] = (strIdx>>0)&0xFF;
+                    br[offset++] = (uint8_t)((strIdx>>8)&0xFF);
+                    br[offset++] = (uint8_t)((strIdx>>0)&0xFF);
                 }
             }
 
@@ -3544,14 +3557,14 @@ namespace plPriv {
             // Build the notification from the changes
             uint64_t newBitmap = bitmapLast ^ bitmapChange;
             uint8_t* br = helperFillResponseBufferHeader(PL_NTF_FROZEN_THREAD, 8, ic.sendBuffer);
-            br[10] = (newBitmap>>56)&0xFF;
-            br[11] = (newBitmap>>48)&0xFF;
-            br[12] = (newBitmap>>40)&0xFF;
-            br[13] = (newBitmap>>32)&0xFF;
-            br[14] = (newBitmap>>24)&0xFF;
-            br[15] = (newBitmap>>16)&0xFF;
-            br[16] = (newBitmap>> 8)&0xFF;
-            br[17] = (newBitmap>> 0)&0xFF;
+            br[10] = (uint8_t)((newBitmap>>56)&0xFF);
+            br[11] = (uint8_t)((newBitmap>>48)&0xFF);
+            br[12] = (uint8_t)((newBitmap>>40)&0xFF);
+            br[13] = (uint8_t)((newBitmap>>32)&0xFF);
+            br[14] = (uint8_t)((newBitmap>>24)&0xFF);
+            br[15] = (uint8_t)((newBitmap>>16)&0xFF);
+            br[16] = (uint8_t)((newBitmap>> 8)&0xFF);
+            br[17] = (uint8_t)((newBitmap>> 0)&0xFF);
             plgBegin(PL_VERBOSE, "Notification: sending new frozen thread bitmap from change");
             plgVar(PL_VERBOSE, newBitmap);
             palComSend(br, 18);
@@ -3561,14 +3574,14 @@ namespace plPriv {
             // This 2-step scheme is solving the ABA problem on server side (ABABA is equivalent to ABA)
             if(newBitmap!=ic.frozenLastThreadBitmap) {
                 br = helperFillResponseBufferHeader(PL_NTF_FROZEN_THREAD, 8, ic.sendBuffer);
-                br[10] = (ic.frozenLastThreadBitmap>>56)&0xFF;
-                br[11] = (ic.frozenLastThreadBitmap>>48)&0xFF;
-                br[12] = (ic.frozenLastThreadBitmap>>40)&0xFF;
-                br[13] = (ic.frozenLastThreadBitmap>>32)&0xFF;
-                br[14] = (ic.frozenLastThreadBitmap>>24)&0xFF;
-                br[15] = (ic.frozenLastThreadBitmap>>16)&0xFF;
-                br[16] = (ic.frozenLastThreadBitmap>> 8)&0xFF;
-                br[17] = (ic.frozenLastThreadBitmap>> 0)&0xFF;
+                br[10] = (uint8_t)((ic.frozenLastThreadBitmap>>56)&0xFF);
+                br[11] = (uint8_t)((ic.frozenLastThreadBitmap>>48)&0xFF);
+                br[12] = (uint8_t)((ic.frozenLastThreadBitmap>>40)&0xFF);
+                br[13] = (uint8_t)((ic.frozenLastThreadBitmap>>32)&0xFF);
+                br[14] = (uint8_t)((ic.frozenLastThreadBitmap>>24)&0xFF);
+                br[15] = (uint8_t)((ic.frozenLastThreadBitmap>>16)&0xFF);
+                br[16] = (uint8_t)((ic.frozenLastThreadBitmap>> 8)&0xFF);
+                br[17] = (uint8_t)((ic.frozenLastThreadBitmap>> 0)&0xFF);
                 plgBegin(PL_VERBOSE, "Notification: sending new frozen thread bitmap");
                 plgVar(PL_VERBOSE, ic.frozenLastThreadBitmap);
                 palComSend(br, 18);
@@ -3587,24 +3600,24 @@ namespace plPriv {
         // Initialize the pre-allocated header
         eventBuffer[0] = 'P'; // For desynchronization/problem detection
         eventBuffer[1] = 'L';
-        eventBuffer[2] = ((int)dataType>>8)&0xFF; // Auxiliary data block type
-        eventBuffer[3] = ((int)dataType>>0)&0xFF;
-        eventBuffer[4] = (eventQty>>24)&0xFF; // Event qty
-        eventBuffer[5] = (eventQty>>16)&0xFF;
-        eventBuffer[6] = (eventQty>> 8)&0xFF;
-        eventBuffer[7] = (eventQty>> 0)&0xFF;
+        eventBuffer[2] = (uint8_t)(((int)dataType>>8)&0xFF); // Auxiliary data block type
+        eventBuffer[3] = (uint8_t)(((int)dataType>>0)&0xFF);
+        eventBuffer[4] = (uint8_t)((eventQty>>24)&0xFF); // Event qty
+        eventBuffer[5] = (uint8_t)((eventQty>>16)&0xFF);
+        eventBuffer[6] = (uint8_t)((eventQty>> 8)&0xFF);
+        eventBuffer[7] = (uint8_t)((eventQty>> 0)&0xFF);
 
         // Timestamp
-        eventBuffer[ 8] = (preDateTick>>56)&0xFF;
-        eventBuffer[ 9] = (preDateTick>>48)&0xFF;
-        eventBuffer[10] = (preDateTick>>40)&0xFF;
-        eventBuffer[11] = (preDateTick>>32)&0xFF;
-        eventBuffer[12] = (preDateTick>>24)&0xFF;
-        eventBuffer[13] = (preDateTick>>16)&0xFF;
-        eventBuffer[14] = (preDateTick>> 8)&0xFF;
-        eventBuffer[15] = (preDateTick>> 0)&0xFF;
+        eventBuffer[ 8] = (uint8_t)((preDateTick>>56)&0xFF);
+        eventBuffer[ 9] = (uint8_t)((preDateTick>>48)&0xFF);
+        eventBuffer[10] = (uint8_t)((preDateTick>>40)&0xFF);
+        eventBuffer[11] = (uint8_t)((preDateTick>>32)&0xFF);
+        eventBuffer[12] = (uint8_t)((preDateTick>>24)&0xFF);
+        eventBuffer[13] = (uint8_t)((preDateTick>>16)&0xFF);
+        eventBuffer[14] = (uint8_t)((preDateTick>> 8)&0xFF);
+        eventBuffer[15] = (uint8_t)((preDateTick>> 0)&0xFF);
 
-        palComSend(eventBuffer, 16+eventQty*sizeof(EventExt));
+        palComSend(eventBuffer, 16+eventQty*(int)sizeof(EventExt));
         implCtx.stats.sentEventQty += eventQty;
         if(eventQty) plgData(PL_VERBOSE, "sent events",  eventQty);
     }
@@ -3634,7 +3647,7 @@ namespace plPriv {
         //  1/8 filling of the current buffer is not reached and less than 1/8 of the dynamic
         //  string pool is used)
         if(!doForce &&
-           ic.tickToNs*(clockType_t)(dateTick-ic.lastSentEventBufferTick)<ic.maxSendingLatencyNs &&
+           ic.tickToNs*(double)(dateTick-ic.lastSentEventBufferTick)<ic.maxSendingLatencyNs &&
            (int)(globalCtx.bankAndIndex.load()&EVTBUFFER_MASK_INDEX)<globalCtx.collectBufferMaxEventQty/8 &&
            globalCtx.dynStringPool.getUsed()<globalCtx.dynStringPool.getSize()/8) {
             plgEnd(PL_VERBOSE, "collectEvents");
@@ -3649,7 +3662,7 @@ namespace plPriv {
         uint32_t eventQty         = implCtx.prevBankAndIndex&EVTBUFFER_MASK_INDEX;
         uint8_t* srcBuffer        = (uint8_t*)(globalCtx.collectBuffers[(implCtx.prevBankAndIndex>>31)&1]);
         uint8_t* dstBuffer        = implCtx.sendBuffer;
-        uint32_t srcByteToCopyQty = eventQty*sizeof(EventInt);
+        uint32_t srcByteToCopyQty = eventQty*(uint32_t)sizeof(EventInt);
         uint32_t stringQty        = 0;
         if(srcByteToCopyQty>ic.stats.collectBufferMaxUsageByteQty) {
             ic.stats.collectBufferMaxUsageByteQty = srcByteToCopyQty;
@@ -3710,8 +3723,8 @@ namespace plPriv {
                 // Idle            : threadId =NONE and sysThreadId=0
                 // External process: threadId =NONE and sysThreadId=N strictly positif
                 // Internal process: threadId!=NONE and sysThreadID=N/A
-                dst.prevCoreId  = (src.lineNbr>>8)&0xFF; // Stored in the line field...
-                dst.newCoreId   = (src.lineNbr   )&0xFF;
+                dst.prevCoreId  = (uint8_t)((src.lineNbr>>8)&0xFF); // Stored in the line field...
+                dst.newCoreId   = (uint8_t)((src.lineNbr   )&0xFF);
                 if     (src.threadId!=PL_CSWITCH_CORE_NONE) dst.nameIdx = (nameData_t)0xFFFFFFFF; // Internal thread
                 else if(src.extra==0)                       dst.nameIdx = (nameData_t)0xFFFFFFFE; // Idle
                 else {                                                                // External thread
@@ -3838,7 +3851,7 @@ namespace plPriv {
 
                 line += 15;
                 PL_SEARCH_TEXT(line<next && *line!='-', 1);
-                uint32_t curPid = parseNumber(line); line += 1; // skip ' '
+                uint32_t curPid = (uint32_t)parseNumber(line); line += 1; // skip ' '
                 PL_SEARCH_TEXT(line<next && *line!='[', 1);
                 uint8_t coreId = (uint8_t)parseNumber(line); line += 1; // skip ']'
                 PL_SEARCH_TEXT(line<next && *line==' ', 0);
@@ -3850,11 +3863,11 @@ namespace plPriv {
                     PL_SEARCH_TEXT(line<next-9 && memcmp(line, "prev_comm", 9)!=0, 10);
                     parseString(line, &pidName1[0], 32);
                     PL_SEARCH_TEXT(line<next-8 && memcmp(line, "prev_pid", 8)!=0, 9);
-                    uint32_t oldSysThreadId = parseNumber(line); ++line;
+                    uint32_t oldSysThreadId = (uint32_t)parseNumber(line); ++line;
                     PL_SEARCH_TEXT(line<next-9 && memcmp(line, "next_comm", 9)!=0, 10);
                     parseString(line, &pidName2[0], 32);
                     PL_SEARCH_TEXT(line<next-8 && memcmp(line, "next_pid", 8)!=0, 9);
-                    uint32_t newSysThreadId = parseNumber(line);
+                    uint32_t newSysThreadId = (uint32_t)parseNumber(line);
 
                     // Convert POSIX PID into our thread IDs
                     int oldThreadId = PL_CSWITCH_CORE_NONE, newThreadId = PL_CSWITCH_CORE_NONE;
@@ -3878,7 +3891,7 @@ namespace plPriv {
 
                     // Store the data in place (2 times 18 bytes stored, and a line is more than 36 bytes in any cases)
                     EventExt& dst1  = dstBuffer[dstEventQty++];
-                    dst1.threadId   = oldThreadId;
+                    dst1.threadId   = (uint8_t)oldThreadId;
                     dst1.flags      = PL_FLAG_TYPE_CSWITCH;
                     dst1.lineNbr    = 0;
                     dst1.prevCoreId = coreId;
@@ -3887,7 +3900,7 @@ namespace plPriv {
                     dst1.PL_PRIV_RAW_FIELD = (bigRawData_t)timeValueNs;
 
                     EventExt& dst2 = dstBuffer[dstEventQty++];
-                    dst2.threadId   = newThreadId;
+                    dst2.threadId   = (uint8_t)newThreadId;
                     dst2.flags      = PL_FLAG_TYPE_CSWITCH;
                     dst2.lineNbr    = 0;
                     dst2.prevCoreId = PL_CSWITCH_CORE_NONE;
@@ -3918,7 +3931,7 @@ namespace plPriv {
 
                         // Store the data in place (18 bytes stored, and a line is more than that in any cases)
                         EventExt& dst1  = dstBuffer[dstEventQty++];
-                        dst1.threadId   = threadId;
+                        dst1.threadId   = (uint8_t)threadId;
                         dst1.flags      = PL_FLAG_TYPE_SOFTIRQ | (isEntry? PL_FLAG_SCOPE_BEGIN : PL_FLAG_SCOPE_END);
                         dst1.lineNbr    = 0;
                         dst1.prevCoreId = coreId;
@@ -4468,7 +4481,9 @@ plInitAndStart(const char* appName, plMode mode, const char* buildName, int serv
     ic.signalsOldHandlers[1] = std::signal(SIGFPE,  plPriv::signalHandler);
     ic.signalsOldHandlers[2] = std::signal(SIGILL,  plPriv::signalHandler);
     ic.signalsOldHandlers[3] = std::signal(SIGSEGV, plPriv::signalHandler);
+#if PL_IMPL_CATCH_INT==1
     ic.signalsOldHandlers[4] = std::signal(SIGINT,  plPriv::signalHandler);
+#endif
     ic.signalsOldHandlers[5] = std::signal(SIGTERM, plPriv::signalHandler);
 #if defined(__unix__)
     ic.signalsOldHandlers[6] = std::signal(SIGPIPE, plPriv::signalHandler);
@@ -4548,7 +4563,7 @@ plInitAndStart(const char* appName, plMode mode, const char* buildName, int serv
     plAssert((uint32_t)plPriv::globalCtx.collectBufferMaxEventQty<plPriv::EVTBUFFER_MASK_INDEX, "The collection buffer is too large");
 #endif
     const int realBufferEventQty = plPriv::globalCtx.collectBufferMaxEventQty + (1+PL_MAX_THREAD_QTY)+64; // 64=margin for the collection thread
-    int sendBufferSize = sizeof(plPriv::EventExt)*realBufferEventQty;
+    int sendBufferSize = (int)sizeof(plPriv::EventExt)*realBufferEventQty;
     if(sendBufferSize<PL_IMPL_REMOTE_RESPONSE_BUFFER_BYTE_QTY) sendBufferSize = PL_IMPL_REMOTE_RESPONSE_BUFFER_BYTE_QTY;
     ic.sendBuffer = new uint8_t[sendBufferSize+64];  // 64 = sent header margin
     ic.allocCollectBuffer = new uint8_t[sizeof(plPriv::EventInt)*2*realBufferEventQty+64];
@@ -4702,10 +4717,10 @@ plInitAndStart(const char* appName, plMode mode, const char* buildName, int serv
     // Write the endianess detection (provision, as little endian is supposed at the moment)
     *(uint32_t*)&header[8]  = 0x12345678;
     // Write the size of TLV block
-    header[12] = (tlvTotalSize>>24)&0xFF;
-    header[13] = (tlvTotalSize>>16)&0xFF;
-    header[14] = (tlvTotalSize>> 8)&0xFF;
-    header[15] = (tlvTotalSize    )&0xFF;
+    header[12] = (uint8_t)((tlvTotalSize>>24)&0xFF);
+    header[13] = (uint8_t)((tlvTotalSize>>16)&0xFF);
+    header[14] = (uint8_t)((tlvTotalSize>> 8)&0xFF);
+    header[15] = (uint8_t)((tlvTotalSize    )&0xFF);
     // Write TLVs in big endian, T=2 bytes L=2 bytes
     int offset = 16;
     // TLV Protocol
@@ -4717,32 +4732,32 @@ plInitAndStart(const char* appName, plMode mode, const char* buildName, int serv
     header[offset+0] = PL_TLV_CLOCK_INFO>>8; header[offset+1] = PL_TLV_CLOCK_INFO&0xFF;
     header[offset+2] = 0; header[offset+3] = 16; // 16 bytes payload
     uint64_t clockOriginTick = PL_GET_CLOCK_TICK_FUNC();
-    header[offset+ 4] = (clockOriginTick>>56)&0xFF; header[offset+ 5] = (clockOriginTick>>48)&0xFF;
-    header[offset+ 6] = (clockOriginTick>>40)&0xFF; header[offset+ 7] = (clockOriginTick>>32)&0xFF;
-    header[offset+ 8] = (clockOriginTick>>24)&0xFF; header[offset+ 9] = (clockOriginTick>>16)&0xFF;
-    header[offset+10] = (clockOriginTick>> 8)&0xFF; header[offset+11] = (clockOriginTick    )&0xFF;
+    header[offset+ 4] = (uint8_t)((clockOriginTick>>56)&0xFF); header[offset+ 5] = (uint8_t)((clockOriginTick>>48)&0xFF);
+    header[offset+ 6] = (uint8_t)((clockOriginTick>>40)&0xFF); header[offset+ 7] = (uint8_t)((clockOriginTick>>32)&0xFF);
+    header[offset+ 8] = (uint8_t)((clockOriginTick>>24)&0xFF); header[offset+ 9] = (uint8_t)((clockOriginTick>>16)&0xFF);
+    header[offset+10] = (uint8_t)((clockOriginTick>> 8)&0xFF); header[offset+11] = (uint8_t)((clockOriginTick    )&0xFF);
     char* tmp1 = (char*)&ic.tickToNs; uint64_t tmp = *(uint64_t*)tmp1;      // Avoids warning about strict aliasing
-    header[offset+12] = (tmp>>56)&0xFF; header[offset+13] = (tmp>>48)&0xFF; // Standard IEEE 754 format, big endian
-    header[offset+14] = (tmp>>40)&0xFF; header[offset+15] = (tmp>>32)&0xFF;
-    header[offset+16] = (tmp>>24)&0xFF; header[offset+17] = (tmp>>16)&0xFF;
-    header[offset+18] = (tmp>> 8)&0xFF; header[offset+19] = (tmp    )&0xFF;
+    header[offset+12] = (uint8_t)((tmp>>56)&0xFF); header[offset+13] = ((uint8_t)(tmp>>48)&0xFF); // Standard IEEE 754 format, big endian
+    header[offset+14] = (uint8_t)((tmp>>40)&0xFF); header[offset+15] = (uint8_t)((tmp>>32)&0xFF);
+    header[offset+16] = (uint8_t)((tmp>>24)&0xFF); header[offset+17] = (uint8_t)((tmp>>16)&0xFF);
+    header[offset+18] = (uint8_t)((tmp>> 8)&0xFF); header[offset+19] = (uint8_t)((tmp    )&0xFF);
     offset += 20;
     // TLV App name
     header[offset+0] = PL_TLV_APP_NAME>>8; header[offset+1] = PL_TLV_APP_NAME&0xFF;
-    header[offset+2] = (appNameLength>>8)&0xFF; header[offset+3] = appNameLength&0xFF;
+    header[offset+2] = (uint8_t)((appNameLength>>8)&0xFF); header[offset+3] = (uint8_t)(appNameLength&0xFF);
     memcpy(&header[offset+4], appName, appNameLength);
     offset += 4+appNameLength;
     // TLV build name
     if(buildNameLength>0) {
         header[offset+0] = PL_TLV_HAS_BUILD_NAME>>8; header[offset+1] = PL_TLV_HAS_BUILD_NAME&0xFF;
-        header[offset+2] = (buildNameLength>>8)&0xFF; header[offset+3] = buildNameLength&0xFF;
+        header[offset+2] = (uint8_t)((buildNameLength>>8)&0xFF); header[offset+3] = (uint8_t)(buildNameLength&0xFF);
         memcpy(&header[offset+4], buildName, buildNameLength);
         offset += 4+buildNameLength;
     }
     // TLV language name
     if(langNameLength>0) {
         header[offset+0] = PL_TLV_HAS_LANG_NAME>>8; header[offset+1] = PL_TLV_HAS_LANG_NAME&0xFF;
-        header[offset+2] = (langNameLength>>8)&0xFF; header[offset+3] = langNameLength&0xFF;
+        header[offset+2] = (uint8_t)((langNameLength>>8)&0xFF); header[offset+3] = (uint8_t)(langNameLength&0xFF);
         memcpy(&header[offset+4], PL_PRIV_IMPL_LANGUAGE, langNameLength);
         offset += 4+langNameLength;
     }
@@ -4820,7 +4835,9 @@ plStopAndUninit(void)
         std::signal(SIGFPE,  ic.signalsOldHandlers[1]);
         std::signal(SIGILL,  ic.signalsOldHandlers[2]);
         std::signal(SIGSEGV, ic.signalsOldHandlers[3]);
+#if PL_IMPL_CATCH_INT==1
         std::signal(SIGINT,  ic.signalsOldHandlers[4]);
+#endif
         std::signal(SIGTERM, ic.signalsOldHandlers[5]);
 #if defined(__unix__)
         std::signal(SIGPIPE, ic.signalsOldHandlers[6]);
